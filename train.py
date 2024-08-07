@@ -19,14 +19,13 @@ class AE(nn.Module):
         self.decoder_drop = nn.Dropout(p=0.3)
         self.decoder_gru2 = nn.GRU(input_size=64, hidden_size=256, batch_first=True)
         self.fc = nn.Linear(256, device_num)
-        
 
     def forward(self, x):
         batch_num = x.size()[0]
         output, _ = self.encoder_gru1(x)
         output = self.encoder_drop(output)
         _, lat_embed = self.encoder_gru2(output)
-        
+
         lat_embed = lat_embed.reshape((batch_num, 1, 64))
         lat_embed = lat_embed.repeat((1, self.length, 1))
 
@@ -40,8 +39,9 @@ class AE(nn.Module):
         self.device = device
         super().to(device)
 
+
 class TimeSeriesDataset(Dataset):
-    def __init__(self, data, time_step=1):
+    def __init__(self, data, time_step=16):
         self.data = data
         self.time_step = time_step
 
@@ -49,40 +49,73 @@ class TimeSeriesDataset(Dataset):
         return len(self.data) - self.time_step
 
     def __getitem__(self, index):
-        x = self.data[index:index+self.time_step]
-        return torch.tensor(x, dtype=torch.float32, device=device)
+        x = self.data[index:index + self.time_step]
+        return torch.tensor(x, dtype=torch.float32)
 
-epoch = 35000
-LR = 0.001
-criterion = nn.MSELoss()
-data = np.loadtxt('Home1/train_data.csv', delimiter=',')
-device_Num = len(data[0])
-time_step = 16
-dataset = TimeSeriesDataset(data, time_step)
-data_loader = DataLoader(dataset, batch_size=64, shuffle=True)
-model = AE(device_Num, time_step)
-device = "cuda" if torch.cuda.is_available() else 'cpu'
-model.to(device)
 
-def train(model):
+
+def train():
+    LR = 0.001
+    criterion = nn.MSELoss()
+    data = np.loadtxt(train_data, delimiter=',')
+    device_Num = len(data[0])
+    time_step = 16
+    dataset = TimeSeriesDataset(data, time_step)
+    data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, pin_memory=True, num_workers=4)
+    if not check_point:
+        model = AE(device_Num, time_step)
+    else:
+        model = torch.load(check_point)
+    device = torch.device("cuda" if torch.cuda.is_available() else 'cpu')
+    print(device)
+    model.to(device)
     optim = torch.optim.Adam(model.parameters(), lr=LR)
     model.train()
     for e in tqdm.tqdm(range(epoch)):
         for data in data_loader:
-            data.to(device)
-            output = model(data)
+            input = data.to(device)
+            output = model(input)
             optim.zero_grad()
-            loss = criterion(output, data)
+            loss = criterion(output, input)
             loss.backward()
-        if (e+1)%10 == 0:
-            print(f'Epoch [{e+1}/{epoch}], Loss: {loss.item():.4f}')
-        if (e+1)%1000 == 0:
-            model.save(f"home1_checkpoint/epoch_{e+1}")
+            optim.step()
+        if (e + 1) % 10 == 0:
+            print(f'Epoch [{e + 1}/{epoch}], Loss: {loss.item():.4f}')
+        if (e + 1) % se == 0:
+            torch.save(model, save_model+str(e+1))
 
+
+epoch=35000
+se=1000
+check_point=None
+save_model='home1_checkpoint/7day_epoch_'
+batch_size=1024
+train_data='Home1/train_data_7day.csv'
 
 
 def main():
-    train(model)
+    global epoch, se, check_point, batch_size, train_data, save_model
+    import argparse
+    parser = argparse.ArgumentParser()
+
+    # 添加参数
+    parser.add_argument('-d', '--train_data', type=str, help='Training dataset, default: train_data_7day.csv')
+    parser.add_argument('-m', '--model', type=str, help='Name of the model')
+    parser.add_argument('-e', '--epoch', type=int, help='Name of the model')
+    parser.add_argument('-sm', '--save_model', type=str, help='Name of the model')
+
+    # 解析参数
+    args = parser.parse_args()
+    if args.train_data:
+        train_data = args.train_data
+    if args.model:
+        check_point = args.model
+    if args.epoch:
+        epoch = args.epoch
+    if args.save_model:
+        save_model = args.save_model
+
+    train()
 
 
 if __name__ == "__main__":
